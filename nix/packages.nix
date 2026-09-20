@@ -1,5 +1,5 @@
 # nix/packages.nix — Hermes Agent package built with uv2nix
-{ inputs, ... }:
+{ inputs, withSystem, ... }:
 {
   perSystem =
     {
@@ -11,6 +11,42 @@
     let
 
       sandbox = pkgs.callPackage ./sandbox.nix { };
+
+      # OCI images. Contents come from the Linux build of `default` for the
+      # requested system; the streaming script itself is built for the host
+      # (see nix/container.nix). `container*` follows the host CPU (Darwin →
+      # same-arch Linux); the `-<system>` suffix pins the architecture.
+      # `container-minimal*` is the same agent without Chromium/agent-browser
+      # and the docker CLI (tag `<version>-minimal`).
+      mkContainer =
+        linuxSystem: args:
+        pkgs.callPackage ./container.nix (
+          {
+            pkgsLinux = withSystem linuxSystem ({ pkgs, ... }: pkgs);
+            hermes-agent = withSystem linuxSystem ({ config, ... }: config.packages.default);
+            rev = inputs.self.rev or null;
+          }
+          // args
+        );
+      hostLinuxSystem = "${pkgs.stdenv.hostPlatform.parsed.cpu.name}-linux";
+      containerVariants = {
+        container = { };
+        container-minimal = {
+          withBrowser = false;
+          withDockerClient = false;
+          imageTag = "${full.version}-minimal";
+        };
+      };
+      containers = lib.concatMapAttrs (
+        name: args:
+        {
+          ${name} = mkContainer hostLinuxSystem args;
+        }
+        // lib.genAttrs' [ "x86_64-linux" "aarch64-linux" ] (system: {
+          name = "${name}-${system}";
+          value = mkContainer system args;
+        })
+      ) containerVariants;
 
       minimal = pkgs.callPackage ./hermes-agent.nix {
         inherit (inputs) uv2nix pyproject-nix pyproject-build-systems;
@@ -47,7 +83,7 @@
       };
     in
     {
-      packages = {
+      packages = containers // {
         node-gyp =
           (pkgs.callPackage ./lib.nix {
             inherit (pkgs) npm-lockfile-fix;
