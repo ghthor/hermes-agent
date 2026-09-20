@@ -14,7 +14,7 @@
   ripgrep,
   git,
   openssh,
-  ffmpeg,
+  ffmpeg-headless,
   tirith,
 
   # linux-only deps
@@ -99,7 +99,15 @@ let
     ripgrep
     git
     openssh
-    ffmpeg
+    # Headless: the agent only ever spawns `ffmpeg`/`ffprobe` (transcoding,
+    # frame extraction). The full build adds ~600 MB via ffplay's SDL →
+    # pipewire/gtk; even the headless build keeps a 1.4 GB clang/llvm
+    # closure alive through its `--nvcc=` buildconf string (CUDA filters, a
+    # GPU-only feature). Disabling that costs a ~2 min uncached ffmpeg
+    # build in exchange for a closure 1.4 GB smaller. `ffplay` is one of
+    # voice mode's local playback fallbacks; the wrapper uses --suffix
+    # PATH, so a system ffplay on a desktop is still found.
+    (ffmpeg-headless.override { withCudaLLVM = false; })
     tirith
   ]
   ++ lib.optionals stdenv.isLinux [
